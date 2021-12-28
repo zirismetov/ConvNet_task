@@ -1,6 +1,6 @@
 import functools
-import random
-
+import os
+from torchvision.utils import save_image
 import torch
 import numpy as np
 import matplotlib
@@ -11,25 +11,34 @@ import torch.utils.data
 from scipy.ndimage import gaussian_filter1d
 from sklearn.datasets import fetch_lfw_people
 from sklearn.model_selection import train_test_split
+from sklearn.utils import class_weight
+from torchvision import transforms
 from tqdm import tqdm
+from torchvision.utils import make_grid
+from show_samples import make_grid_with_labels
 
-BATCH_SIZE = 16
+
+
+
+BATCH_SIZE = 8
 n_classes = 0
-n_names = np.array([])
+n_names = []
 MAX_LEN = 200
 DEVICE = 'cpu'
 if torch.cuda.is_available():
     DEVICE = 'cuda'
 
 class LoadDataset(torch.utils.data.Dataset):
-    def __init__(self):
+    def __init__(self, transform=None):
         global n_classes
         global n_names
+        self.transform = transform
 
         super().__init__()
-        self.data = fetch_lfw_people(color=True)
+        self.data = fetch_lfw_people(color=True, min_faces_per_person=50)
         n_classes = self.data.target_names.size
-        n_names = self.data.target_names
+        n_names.append(np.expand_dims(self.data.target_names, axis=1))
+
 
 
     def __len__(self):
@@ -41,38 +50,55 @@ class LoadDataset(torch.utils.data.Dataset):
         x = torch.FloatTensor(np_x)
         x = torch.movedim(x, 2, 0)
 
-        np_y = np.zeros((n_classes,))
-        np_y[self.data.target[idx]] = 1
-        y = torch.FloatTensor(np_y)
+        # np_y = self.data.target[idx]
+        y = self.data.target[idx]
+
+        if self.transform:
+            img = self.transform(x)
+            img = make_grid_with_labels(img, labels=n_names)
+            x = img
 
         return x, y
 
 
-dataset = LoadDataset()
-devide_by_idx = np.arange(len(dataset))
+torchvision_transform = transforms.Compose([
+    transforms.ToPILImage(),
+    transforms.Lambda(lambda x: torchvision.transforms.functional.invert(x)),
+    transforms.Resize((256, 256)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+])
+dataset = LoadDataset(transform=torchvision_transform)
+divide_idx = np.arange(len(dataset))
 subset_train_data, subset_test_data = train_test_split(
-    devide_by_idx,
+    divide_idx,
     test_size=0.2,
-    random_state=11)
+    random_state=11,
+    shuffle=None,
+    stratify=dataset.data.target)
 
 dataset_train = torch.utils.data.Subset(dataset, subset_train_data)
 dataset_test = torch.utils.data.Subset(dataset, subset_test_data)
 
+
+
 data_loader_train = torch.utils.data.DataLoader(
     dataset=dataset_train,
     batch_size=BATCH_SIZE,
-    shuffle=True
+    shuffle=True,
+    drop_last=True
 )
 
 data_loader_test = torch.utils.data.DataLoader(
     dataset=dataset_test,
     batch_size=BATCH_SIZE,
-    shuffle=False
+    shuffle=False,
+    drop_last=True
 )
 
 
 class DenseBlock(torch.nn.Module):
-    def __init__(self, in_features, num_chains = 4):
+    def __init__(self, in_features, num_chains = 3):
         super().__init__()
 
         self.chains = []
@@ -132,6 +158,21 @@ class Reshape(torch.nn.Module):
     def forward(self,x ):
         return x.view(self.target_shape)
 
+class View_Result(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.l = 0
+
+    def forward(self, x):
+        x_out = x
+        if self.l % 5 == 0:
+            inp = torch.nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, padding=1, stride=1)
+            img = make_grid_with_labels(tensor=inp(x.to("cpu")).detach().cpu(),
+                                        labels=n_names)
+            show(img, self.l)
+
+        self.l +=1
+        return x_out
 
 class DenseNet(torch.nn.Module):
     def __init__(self):
@@ -148,26 +189,38 @@ class DenseNet(torch.nn.Module):
             # torch.nn.MaxPool2d(kernel_size=7,
             #                    stride=2 ),
             DenseBlock(in_features=num_channels),
-            TransitionLayer(in_features=num_channels+4*num_channels, out_features=num_channels),
+            TransitionLayer(in_features=num_channels+3*num_channels, out_features=num_channels),
             DenseBlock(in_features=num_channels),
-            TransitionLayer(in_features=num_channels + 4 * num_channels, out_features=num_channels),
+            TransitionLayer(in_features=num_channels + 3 * num_channels, out_features=num_channels),
+            # DenseBlock(in_features=num_channels),
+            # TransitionLayer(in_features=num_channels + 4 * num_channels, out_features=num_channels),
             DenseBlock(in_features=num_channels),
-            TransitionLayer(in_features=num_channels + 4 * num_channels, out_features=num_channels),
-            DenseBlock(in_features=num_channels),
-            TransitionLayer(in_features=num_channels + 4 * num_channels, out_features=num_channels),
+            TransitionLayer(in_features=num_channels + 3 * num_channels, out_features=num_channels),
+            View_Result(),
             torch.nn.AdaptiveAvgPool2d(output_size=1),
             Reshape(target_shape=(-1, num_channels)),
             torch.nn.Linear(in_features=num_channels, out_features=n_classes),
-            torch.nn.Softmax(dim=1)
         )
 
     def forward(self, x):
-        return self.layers.forward(x)
-
+        output = self.layers.forward(x)
+        soft = torch.softmax(output, dim=1)
+        return soft
 
 model = DenseNet()
 model = model.to(DEVICE)
 optimizer = torch.optim.RMSprop(model.parameters(), lr=1e-4)
+
+
+class_weights=class_weight.compute_class_weight(class_weight='balanced',
+                                                classes=np.unique(dataset.data.target),
+                                                y=dataset.data.target)
+class_weights=torch.tensor(class_weights,dtype=torch.float).to(DEVICE)
+
+
+def show(img, l):
+    npimg = img.cpu().numpy()
+    plt.imsave(f'dense_test_{l}.png',np.transpose(npimg, (1, 2, 0)))
 
 metrics = {}
 for stage in ['train', 'test']:
@@ -191,14 +244,13 @@ for epoch in tqdm(range(1, 500)):
 
             x = x.to(DEVICE)
             y = y.to(DEVICE)
+
+
             y_prim = model.forward(x)
 
-            loss = torch.sum(-y*torch.log(y_prim + 1e-8))
+            loss = torch.sum(-class_weights[y]*torch.log(y_prim[:, y[range(len(x))]] + 1e-8))
             # Sum dependant on batch size => larger LR
             # Mean independant of batch size => smaller LR
-
-            # y.to('cuda')
-            # y.cuda()
 
             metrics_epoch[f'{stage}_loss'].append(loss.cpu().item()) # Tensor(0.1) => 0.1f
 
@@ -207,36 +259,39 @@ for epoch in tqdm(range(1, 500)):
                 optimizer.step()
                 optimizer.zero_grad()
 
-            np_y_prim = y_prim.cpu().data.numpy()
-            np_y = y.cpu().data.numpy()
+            np_y_prim = y_prim.cpu().detach().data.numpy()
+            np_y = y.cpu().detach().data.numpy()
 
-            idx_y = np.argmax(np_y, axis=1)
-            idx_y_prim = np.argmax(np_y_prim, axis=1)
+            # idx_y = np.argmax(np_y, axis=1)
+            # idx_y_prim = np.argmax(np_y_prim, axis=1)
 
-            acc = np.mean((idx_y == idx_y_prim) * 1.0)
-            metrics_epoch[f'{stage}_acc'].append(acc)
+            # acc = np.mean((np_y == np_y_prim) * 1.0)
+            # metrics_epoch[f'{stage}_acc'].append(acc)
 
-        metrics_strs = []
-        for key in metrics_epoch.keys():
-            if stage in key:
-                value = np.mean(metrics_epoch[key])
-                metrics[key].append(value)
-                metrics_strs.append(f'{key}: {round(value, 3)}')
 
-        print(f'epoch: {epoch} {" ".join(metrics_strs)}')
 
-    plt.clf()
-    plts = []
-    c = 0
-    for key, value in metrics.items():
-        value = gaussian_filter1d(value, sigma=2)
 
-        plts += plt.plot(value, f'C{c}', label=key)
-        ax = plt.twinx()
-        c += 1
-
-    plt.legend(plts, [it.get_label() for it in plts])
-    plt.savefig('plot_densenet_lfw')
-plt.savefig('plot_densenet_lfw')
+#         metrics_strs = []
+#         for key in metrics_epoch.keys():
+#             if stage in key:
+#                 value = np.mean(metrics_epoch[key])
+#                 metrics[key].append(value)
+#                 metrics_strs.append(f'{key}: {round(value, 3)}')
+#
+#         print(f'epoch: {epoch} {" ".join(metrics_strs)}')
+#
+#     plt.clf()
+#     plts = []
+#     c = 0
+#     for key, value in metrics.items():
+#         value = gaussian_filter1d(value, sigma=2)
+#
+#         plts += plt.plot(value, f'C{c}', label=key)
+#         ax = plt.twinx()
+#         c += 1
+#
+#     plt.legend(plts, [it.get_label() for it in plts])
+#     plt.savefig('plot_densenet_lfw')
+# plt.savefig('plot_densenet_lfw')
 
 
