@@ -12,7 +12,7 @@ from sklearn.datasets import fetch_lfw_people, make_blobs
 from sklearn.model_selection import train_test_split
 import time
 # import tensorboard_utils
-
+from conv_tasks import tensorboard_utils
 
 MAX_LEN = 200
 INPUT_SIZE_HEIGHT = 62
@@ -37,9 +37,9 @@ args = parser.parse_args()
 LEARNING_RATE = args.lr
 BATCH_SIZE = args.batch_size
 
-# summary_writer = tensorboard_utils.CustomSummaryWriter(
-#     logdir=f'{args.seq_name}/{args.run_name}'
-# )
+summary_writer = tensorboard_utils.CustomSummaryWriter(
+    logdir=f'{args.seq_name}/{args.run_name}'
+)
 
 class LoadDataset(torch.utils.data.Dataset):
     def __init__(self):
@@ -193,64 +193,64 @@ for epoch in range(1, args.epochs+1):
         plt.savefig('plot_vgg_lfw')
 
 
-#         print(f'epoch: {epoch} {" ".join(metrics_strs)}')
-#
-#         metrics_epoch[f'{stage}_loss'] = np.mean(metrics_epoch[f'{stage}_loss'])
-#         metrics_epoch[f'{stage}_f1'] = np.mean(metrics_epoch[f'{stage}_f1'])
-#
-#
-#         summary_writer.add_scalar(
-#             tag=f'{stage}_loss',
-#             scalar_value=metrics_epoch[f'{stage}_loss'],
-#             global_step=epoch
-#         )
-#
-#         summary_writer.add_scalar(
-#             tag=f'{stage}_f1',
-#             scalar_value=metrics_epoch[f'{stage}_f1'],
-#             global_step=epoch
-#         )
-#
-#         summary_writer.add_hparams(
-#             hparam_dict=args.__dict__,
-#             metric_dict={
-#                 f'best_{stage}_loss': loss.cpu().item()
-#             },
-#             name=args.run_name,
-#             global_step=epoch
-#         )
-#
-#         fig = plt.figure()
-#         plt.imshow(conf_matrix, interpolation='nearest',
-#                    cmap=plt.get_cmap('Greys'))
-#         plt.xticks(list(range(n_classes)), n_names.tolist())
-#         plt.yticks(list(range(n_classes)), n_names.tolist())
-#         for x in range(n_classes):
-#             for y in range(n_classes):
-#                 plt.annotate(
-#                     str(round(100 * conf_matrix[x, y] / np.sum(conf_matrix[x]) + 1e-8, 1)), xy=(y, x),
-#                     horizontalalignment='center',
-#                     verticalalignment='center',
-#                     backgroundcolor='white',
-#
-#                 )
-#         plt.xlabel('True')
-#         plt.ylabel('Predicted')
-#
-#         summary_writer.add_figure(
-#             tag='conf_matrix',
-#             figure=fig,
-#             global_step=epoch
-#         )
-#
-#         embeddings, classes = make_blobs(n_samples=1000, n_features=128, centers=3)
-#         summary_writer.add_embedding(
-#             mat=embeddings,
-#             metadata=classes.tolist(),
-#             tag='embeddings',
-#             global_step=epoch
-#         )
-#
-#         summary_writer.flush()
-#
-# summary_writer.close()
+        print(f'epoch: {epoch} {" ".join(metrics_strs)}')
+
+        metrics_epoch[f'{stage}_loss'] = np.mean(metrics_epoch[f'{stage}_loss'])
+        metrics_epoch[f'{stage}_f1'] = np.mean(metrics_epoch[f'{stage}_f1'])
+
+
+        summary_writer.add_scalar(
+            tag=f'{stage}_loss',
+            scalar_value=metrics_epoch[f'{stage}_loss'],
+            global_step=epoch
+        )
+
+        summary_writer.add_scalar(
+            tag=f'{stage}_f1',
+            scalar_value=metrics_epoch[f'{stage}_f1'],
+            global_step=epoch
+        )
+
+        summary_writer.add_hparams(
+            hparam_dict=args.__dict__,
+            metric_dict={
+                f'best_{stage}_loss': loss.cpu().item()
+            },
+            name=args.run_name,
+            global_step=epoch
+        )
+
+        fig = plt.figure()
+        plt.imshow(conf_matrix, interpolation='nearest',
+                   cmap=plt.get_cmap('Greys'))
+        plt.xticks(list(range(n_classes)), n_names.tolist())
+        plt.yticks(list(range(n_classes)), n_names.tolist())
+        for x in range(n_classes):
+            for y in range(n_classes):
+                plt.annotate(
+                    str(round(100 * conf_matrix[x, y] / np.sum(conf_matrix[x]) + 1e-8, 1)), xy=(y, x),
+                    horizontalalignment='center',
+                    verticalalignment='center',
+                    backgroundcolor='white',
+
+                )
+        plt.xlabel('True')
+        plt.ylabel('Predicted')
+
+        summary_writer.add_figure(
+            tag='conf_matrix',
+            figure=fig,
+            global_step=epoch
+        )
+
+        embeddings, classes = make_blobs(n_samples=1000, n_features=128, centers=3)
+        summary_writer.add_embedding(
+            mat=embeddings,
+            metadata=classes.tolist(),
+            tag='embeddings',
+            global_step=epoch
+        )
+
+        summary_writer.flush()
+
+summary_writer.close()
